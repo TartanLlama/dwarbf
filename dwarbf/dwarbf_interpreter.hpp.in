@@ -1,0 +1,6 @@
+#include <string>
+namespace dwarbf {
+    std::string interpreter_text = R"(
+@INTERPRETER_TEXT@
+)";
+}

@@ -1,0 +1,7 @@
+# dwarbf - A Brainfuck interpreter written in DWARF debug information
+
+Run the BF program with:
+
+```shell
+$ gdb --eval-command=starti --eval-command="p (int)&dwarbf_program" fib --batch
+```

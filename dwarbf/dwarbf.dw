@@ -1,0 +1,2652 @@
+# HERE BE DRAGONS
+# This is a Brainfuck interpreter written in a DWARF expression
+
+# General algorithm:
+# The top of the stack holds a pointer to the current character of the BF program, the index of the current BF memory cell, and a list of memory update records.
+# The memory update records are stored as a list of 8-byte values, where the first 7 bytes are the index of the memory cell to update, and the last byte is the new value to store in the cell.
+# The memory update list is terminated with an 8-byte value of 0xffffffffffffff00.
+# The interpreter reads the current character of the BF program, and then uses a series of conditional branches to execute the appropriate BF command.
+# The < and > commands are implemented by incrementing or decrementing the cell pointer.
+# The + and - commands search the list of memory updates for the most recent update to the current cell, and then create a new update record with the new value. If no existing record is found, they act as if they found a record with a value of 0.
+# The [ and ] commands search the list of memory updates for the most recent update to the current cell, and then skip to matching brace depending on the cell value. If no existing record is found, they act as if they found a record with a value of 0.
+# The , and . commands are not implemented.
+# These is no way to access memory cells past the first three without a `pick N` command, which requires a constant N to be known at compile time. As such, I implement a "pick table" that uses a series of conditional branches to implement the `pick N` command for all possible values of N (up to 255)
+# A lot of code is duplicated, since deduplication would require more state, and adding more state would prevent the interpreter from being able to add entries to the memory update list.
+
+# INPUT decorations:
+# prog = pointer to the current character of the program
+# cell = pointer to the current cell
+# marker = end of list marker (0xffffffffffffff00)
+# list = the list of cell values
+
+# INPUT: prog
+.main:
+    # Pointer to the current cell
+    lit0
+
+    # End of list marker (0xffffffffffffff00)
+    const8u 18446744073709551360
+    rot
+
+# INPUT: cell, prog, list, marker
+.main_loop:
+    # Read the current character of the program
+    swap
+    dup
+    deref_size 1
+
+    dup
+    
+    # Compare against \0
+    const1u 0
+    eq
+    bra .finished
+    
+    dup
+    
+    # Compare against <
+    const1u 60
+    eq
+    bra .do_left
+    
+    dup
+    
+    # Compare against >
+    const1u 62
+    eq
+    bra .do_right
+    
+    dup
+    
+    # Compare against +
+    const1u 43
+    eq
+    bra .do_plus
+    
+    dup
+    
+    # Compare against -
+    const1u 45
+    eq
+    bra .do_minus
+    
+    dup
+    
+    # Compare against ]
+    const1u 93
+    eq
+    bra .do_close_brace
+    
+    # [ or anything else
+    drop
+    swap
+    skip .continue_loop
+
+# INPUT: char, prog, cell, list, marker
+.do_left:
+    drop
+    swap
+    lit1
+    minus
+    skip .continue_loop
+
+
+# INPUT: char, prog, cell, list, marker
+.do_right:
+    drop
+    swap
+    lit1
+    plus
+    skip .continue_loop
+
+
+# INPUT: char, prog, cell, list, marker
+# OUTPUT: prog, cell, new_list_value, list, marker
+.do_plus:
+    drop
+    swap
+    lit6
+    .plus_loop:
+    dup
+    rot
+    over
+    swap
+    lit0
+    swap
+    skip .pick_table
+    .pick_table_plus_ret:
+    dup
+    rot
+    lit8
+    shr
+    lit6
+    minus
+    eq
+    bra .plus_found
+    # Look for marker
+    const8u 18446744073709551360
+    eq
+    bra .plus_eol
+    swap
+    lit1
+    plus
+    skip .plus_loop
+    .plus_found:
+    const1u 1
+    plus
+    rot
+    rot
+    drop
+    rot
+    skip .continue_loop
+    .plus_eol:
+    swap
+    drop
+    dup
+    lit6
+    plus
+    lit8
+    shl
+    lit1
+    plus
+    rot
+    skip .continue_loop
+
+# INPUT: char, prog, cell, list, marker
+.do_minus:
+    drop
+    swap
+    lit6
+    .minus_loop:
+    dup
+    rot
+    over
+    swap
+    lit1
+    swap
+    skip .pick_table
+    .pick_table_minus_ret:
+    dup
+    rot
+    lit8
+    shr
+    lit6
+    minus
+    eq
+    bra .minus_found
+    # Look for marker
+    const8u 18446744073709551360
+    eq
+    bra .minus_eol
+    swap
+    lit1
+    plus
+    skip .minus_loop
+    .minus_found:
+    const1u 1
+    minus
+    rot
+    rot
+    drop
+    rot
+    skip .continue_loop
+    .minus_eol:
+    swap
+    drop
+    dup
+    lit6
+    plus
+    lit8
+    shl
+    lit1
+    plus
+    rot
+    skip .continue_loop
+    
+# INPUT: char, prog, cell, list, marker
+.do_close_brace:
+    drop
+    swap
+    lit6
+    .close_loop:
+    dup
+    rot
+    over
+    swap
+    lit3
+    swap
+    skip .pick_table
+    .pick_table_close_ret:
+    dup
+    rot
+    lit8
+    shr
+    lit6
+    minus
+    eq
+    bra .close_found
+    # Look for marker
+    const8u 18446744073709551360
+    eq
+    bra .close_seek
+    swap
+    lit1
+    plus
+    skip .close_loop
+    .close_found:
+    const1u 56
+    shl
+    const1u 56
+    shr
+    lit0
+    ne
+    bra .close_seek
+    swap
+    drop
+    skip .continue_loop
+    .close_seek:
+    nop
+    nop
+    nop
+    swap
+    drop
+    swap
+    lit0
+    swap
+    .close_seek_loop:
+    lit1
+    minus
+    dup
+    deref_size 1
+    dup
+    const1u 91
+    eq
+    bra .close_handle_open_brace
+    const1u 93
+    eq
+    bra .close_handle_close_brace
+    skip .close_seek_loop
+    .close_handle_open_brace:
+    drop
+    swap
+    dup
+    lit0
+    ne
+    bra .close_continue_seek_loop
+    drop
+    swap
+    skip .continue_loop
+    .close_continue_seek_loop:
+    lit1
+    minus
+    swap
+    skip .close_seek_loop
+    .close_handle_close_brace:
+    swap
+    lit1
+    plus
+    swap
+    skip .close_seek_loop
+
+
+# INPUT: cell, prog, list, marker
+.continue_loop:
+    swap
+    lit1
+    plus
+    swap
+    skip .main_loop
+
+
+# INPUT: char, prog, cell, list, marker
+.finished:
+    drop
+    swap
+    lit6
+    plus
+    lit5
+    .finished_loop:
+    dup
+    rot
+    lit2
+    swap
+    skip .pick_table
+    .pick_table_finished_ret:
+    over
+    swap
+    dup
+    lit8
+    shr
+    swap
+    rot
+    eq
+    bra .result_found
+    # Look for marker
+    const8u 18446744073709551360
+    eq
+    bra .result_eol
+    swap
+    lit1
+    plus
+    skip .finished_loop
+    .result_found:
+    # Found the result, shift off the tag and return the value
+    const1u 56
+    shl
+    const1u 56
+    shr
+    skip .end
+    .result_eol:
+    # No stored result, return 0
+    lit0
+    skip .end
+
+
+# INPUT: N/A
+.error:
+    const4u 0x000E7707
+    skip .end
+
+# INPUT: pick_index, return address (0 = plus, 1 = minus, 2 = finished, 3 = close brace),
+#        working_memory, prog, list, marker
+# OUTPUT: value at pick_index, 
+#         working_memory, prog, list, marker
+.pick_table:
+    dup
+    const8u 3
+    ne
+    bra .p4
+    pick 3
+    skip .pick_end
+    .p4:
+
+
+    dup
+    const8u 4
+    ne
+    bra .p5
+    pick 4
+    skip .pick_end
+    .p5:
+
+
+    dup
+    const8u 5
+    ne
+    bra .p6
+    pick 5
+    skip .pick_end
+    .p6:
+
+
+    dup
+    const8u 6
+    ne
+    bra .p7
+    pick 6
+    skip .pick_end
+    .p7:
+
+
+    dup
+    const8u 7
+    ne
+    bra .p8
+    pick 7
+    skip .pick_end
+    .p8:
+
+
+    dup
+    const8u 8
+    ne
+    bra .p9
+    pick 8
+    skip .pick_end
+    .p9:
+
+
+    dup
+    const8u 9
+    ne
+    bra .p10
+    pick 9
+    skip .pick_end
+    .p10:
+
+
+    dup
+    const8u 10
+    ne
+    bra .p11
+    pick 10
+    skip .pick_end
+    .p11:
+
+
+    dup
+    const8u 11
+    ne
+    bra .p12
+    pick 11
+    skip .pick_end
+    .p12:
+
+
+    dup
+    const8u 12
+    ne
+    bra .p13
+    pick 12
+    skip .pick_end
+    .p13:
+
+
+    dup
+    const8u 13
+    ne
+    bra .p14
+    pick 13
+    skip .pick_end
+    .p14:
+
+
+    dup
+    const8u 14
+    ne
+    bra .p15
+    pick 14
+    skip .pick_end
+    .p15:
+
+
+    dup
+    const8u 15
+    ne
+    bra .p16
+    pick 15
+    skip .pick_end
+    .p16:
+
+
+    dup
+    const8u 16
+    ne
+    bra .p17
+    pick 16
+    skip .pick_end
+    .p17:
+
+
+    dup
+    const8u 17
+    ne
+    bra .p18
+    pick 17
+    skip .pick_end
+    .p18:
+
+
+    dup
+    const8u 18
+    ne
+    bra .p19
+    pick 18
+    skip .pick_end
+    .p19:
+
+
+    dup
+    const8u 19
+    ne
+    bra .p20
+    pick 19
+    skip .pick_end
+    .p20:
+
+
+    dup
+    const8u 20
+    ne
+    bra .p21
+    pick 20
+    skip .pick_end
+    .p21:
+
+
+    dup
+    const8u 21
+    ne
+    bra .p22
+    pick 21
+    skip .pick_end
+    .p22:
+
+
+    dup
+    const8u 22
+    ne
+    bra .p23
+    pick 22
+    skip .pick_end
+    .p23:
+
+
+    dup
+    const8u 23
+    ne
+    bra .p24
+    pick 23
+    skip .pick_end
+    .p24:
+
+
+    dup
+    const8u 24
+    ne
+    bra .p25
+    pick 24
+    skip .pick_end
+    .p25:
+
+
+    dup
+    const8u 25
+    ne
+    bra .p26
+    pick 25
+    skip .pick_end
+    .p26:
+
+
+    dup
+    const8u 26
+    ne
+    bra .p27
+    pick 26
+    skip .pick_end
+    .p27:
+
+
+    dup
+    const8u 27
+    ne
+    bra .p28
+    pick 27
+    skip .pick_end
+    .p28:
+
+
+    dup
+    const8u 28
+    ne
+    bra .p29
+    pick 28
+    skip .pick_end
+    .p29:
+
+
+    dup
+    const8u 29
+    ne
+    bra .p30
+    pick 29
+    skip .pick_end
+    .p30:
+
+
+    dup
+    const8u 30
+    ne
+    bra .p31
+    pick 30
+    skip .pick_end
+    .p31:
+
+
+    dup
+    const8u 31
+    ne
+    bra .p32
+    pick 31
+    skip .pick_end
+    .p32:
+
+
+    dup
+    const8u 32
+    ne
+    bra .p33
+    pick 32
+    skip .pick_end
+    .p33:
+
+
+    dup
+    const8u 33
+    ne
+    bra .p34
+    pick 33
+    skip .pick_end
+    .p34:
+
+
+    dup
+    const8u 34
+    ne
+    bra .p35
+    pick 34
+    skip .pick_end
+    .p35:
+
+
+    dup
+    const8u 35
+    ne
+    bra .p36
+    pick 35
+    skip .pick_end
+    .p36:
+
+
+    dup
+    const8u 36
+    ne
+    bra .p37
+    pick 36
+    skip .pick_end
+    .p37:
+
+
+    dup
+    const8u 37
+    ne
+    bra .p38
+    pick 37
+    skip .pick_end
+    .p38:
+
+
+    dup
+    const8u 38
+    ne
+    bra .p39
+    pick 38
+    skip .pick_end
+    .p39:
+
+
+    dup
+    const8u 39
+    ne
+    bra .p40
+    pick 39
+    skip .pick_end
+    .p40:
+
+
+    dup
+    const8u 40
+    ne
+    bra .p41
+    pick 40
+    skip .pick_end
+    .p41:
+
+
+    dup
+    const8u 41
+    ne
+    bra .p42
+    pick 41
+    skip .pick_end
+    .p42:
+
+
+    dup
+    const8u 42
+    ne
+    bra .p43
+    pick 42
+    skip .pick_end
+    .p43:
+
+
+    dup
+    const8u 43
+    ne
+    bra .p44
+    pick 43
+    skip .pick_end
+    .p44:
+
+
+    dup
+    const8u 44
+    ne
+    bra .p45
+    pick 44
+    skip .pick_end
+    .p45:
+
+
+    dup
+    const8u 45
+    ne
+    bra .p46
+    pick 45
+    skip .pick_end
+    .p46:
+
+
+    dup
+    const8u 46
+    ne
+    bra .p47
+    pick 46
+    skip .pick_end
+    .p47:
+
+
+    dup
+    const8u 47
+    ne
+    bra .p48
+    pick 47
+    skip .pick_end
+    .p48:
+
+
+    dup
+    const8u 48
+    ne
+    bra .p49
+    pick 48
+    skip .pick_end
+    .p49:
+
+
+    dup
+    const8u 49
+    ne
+    bra .p50
+    pick 49
+    skip .pick_end
+    .p50:
+
+
+    dup
+    const8u 50
+    ne
+    bra .p51
+    pick 50
+    skip .pick_end
+    .p51:
+
+
+    dup
+    const8u 51
+    ne
+    bra .p52
+    pick 51
+    skip .pick_end
+    .p52:
+
+
+    dup
+    const8u 52
+    ne
+    bra .p53
+    pick 52
+    skip .pick_end
+    .p53:
+
+
+    dup
+    const8u 53
+    ne
+    bra .p54
+    pick 53
+    skip .pick_end
+    .p54:
+
+
+    dup
+    const8u 54
+    ne
+    bra .p55
+    pick 54
+    skip .pick_end
+    .p55:
+
+
+    dup
+    const8u 55
+    ne
+    bra .p56
+    pick 55
+    skip .pick_end
+    .p56:
+
+
+    dup
+    const8u 56
+    ne
+    bra .p57
+    pick 56
+    skip .pick_end
+    .p57:
+
+
+    dup
+    const8u 57
+    ne
+    bra .p58
+    pick 57
+    skip .pick_end
+    .p58:
+
+
+    dup
+    const8u 58
+    ne
+    bra .p59
+    pick 58
+    skip .pick_end
+    .p59:
+
+
+    dup
+    const8u 59
+    ne
+    bra .p60
+    pick 59
+    skip .pick_end
+    .p60:
+
+
+    dup
+    const8u 60
+    ne
+    bra .p61
+    pick 60
+    skip .pick_end
+    .p61:
+
+
+    dup
+    const8u 61
+    ne
+    bra .p62
+    pick 61
+    skip .pick_end
+    .p62:
+
+
+    dup
+    const8u 62
+    ne
+    bra .p63
+    pick 62
+    skip .pick_end
+    .p63:
+
+
+    dup
+    const8u 63
+    ne
+    bra .p64
+    pick 63
+    skip .pick_end
+    .p64:
+
+
+    dup
+    const8u 64
+    ne
+    bra .p65
+    pick 64
+    skip .pick_end
+    .p65:
+
+
+    dup
+    const8u 65
+    ne
+    bra .p66
+    pick 65
+    skip .pick_end
+    .p66:
+
+
+    dup
+    const8u 66
+    ne
+    bra .p67
+    pick 66
+    skip .pick_end
+    .p67:
+
+
+    dup
+    const8u 67
+    ne
+    bra .p68
+    pick 67
+    skip .pick_end
+    .p68:
+
+
+    dup
+    const8u 68
+    ne
+    bra .p69
+    pick 68
+    skip .pick_end
+    .p69:
+
+
+    dup
+    const8u 69
+    ne
+    bra .p70
+    pick 69
+    skip .pick_end
+    .p70:
+
+
+    dup
+    const8u 70
+    ne
+    bra .p71
+    pick 70
+    skip .pick_end
+    .p71:
+
+
+    dup
+    const8u 71
+    ne
+    bra .p72
+    pick 71
+    skip .pick_end
+    .p72:
+
+
+    dup
+    const8u 72
+    ne
+    bra .p73
+    pick 72
+    skip .pick_end
+    .p73:
+
+
+    dup
+    const8u 73
+    ne
+    bra .p74
+    pick 73
+    skip .pick_end
+    .p74:
+
+
+    dup
+    const8u 74
+    ne
+    bra .p75
+    pick 74
+    skip .pick_end
+    .p75:
+
+
+    dup
+    const8u 75
+    ne
+    bra .p76
+    pick 75
+    skip .pick_end
+    .p76:
+
+
+    dup
+    const8u 76
+    ne
+    bra .p77
+    pick 76
+    skip .pick_end
+    .p77:
+
+
+    dup
+    const8u 77
+    ne
+    bra .p78
+    pick 77
+    skip .pick_end
+    .p78:
+
+
+    dup
+    const8u 78
+    ne
+    bra .p79
+    pick 78
+    skip .pick_end
+    .p79:
+
+
+    dup
+    const8u 79
+    ne
+    bra .p80
+    pick 79
+    skip .pick_end
+    .p80:
+
+
+    dup
+    const8u 80
+    ne
+    bra .p81
+    pick 80
+    skip .pick_end
+    .p81:
+
+
+    dup
+    const8u 81
+    ne
+    bra .p82
+    pick 81
+    skip .pick_end
+    .p82:
+
+
+    dup
+    const8u 82
+    ne
+    bra .p83
+    pick 82
+    skip .pick_end
+    .p83:
+
+
+    dup
+    const8u 83
+    ne
+    bra .p84
+    pick 83
+    skip .pick_end
+    .p84:
+
+
+    dup
+    const8u 84
+    ne
+    bra .p85
+    pick 84
+    skip .pick_end
+    .p85:
+
+
+    dup
+    const8u 85
+    ne
+    bra .p86
+    pick 85
+    skip .pick_end
+    .p86:
+
+
+    dup
+    const8u 86
+    ne
+    bra .p87
+    pick 86
+    skip .pick_end
+    .p87:
+
+
+    dup
+    const8u 87
+    ne
+    bra .p88
+    pick 87
+    skip .pick_end
+    .p88:
+
+
+    dup
+    const8u 88
+    ne
+    bra .p89
+    pick 88
+    skip .pick_end
+    .p89:
+
+
+    dup
+    const8u 89
+    ne
+    bra .p90
+    pick 89
+    skip .pick_end
+    .p90:
+
+
+    dup
+    const8u 90
+    ne
+    bra .p91
+    pick 90
+    skip .pick_end
+    .p91:
+
+
+    dup
+    const8u 91
+    ne
+    bra .p92
+    pick 91
+    skip .pick_end
+    .p92:
+
+
+    dup
+    const8u 92
+    ne
+    bra .p93
+    pick 92
+    skip .pick_end
+    .p93:
+
+
+    dup
+    const8u 93
+    ne
+    bra .p94
+    pick 93
+    skip .pick_end
+    .p94:
+
+
+    dup
+    const8u 94
+    ne
+    bra .p95
+    pick 94
+    skip .pick_end
+    .p95:
+
+
+    dup
+    const8u 95
+    ne
+    bra .p96
+    pick 95
+    skip .pick_end
+    .p96:
+
+
+    dup
+    const8u 96
+    ne
+    bra .p97
+    pick 96
+    skip .pick_end
+    .p97:
+
+
+    dup
+    const8u 97
+    ne
+    bra .p98
+    pick 97
+    skip .pick_end
+    .p98:
+
+
+    dup
+    const8u 98
+    ne
+    bra .p99
+    pick 98
+    skip .pick_end
+    .p99:
+
+
+    dup
+    const8u 99
+    ne
+    bra .p100
+    pick 99
+    skip .pick_end
+    .p100:
+
+
+    dup
+    const8u 100
+    ne
+    bra .p101
+    pick 100
+    skip .pick_end
+    .p101:
+
+
+    dup
+    const8u 101
+    ne
+    bra .p102
+    pick 101
+    skip .pick_end
+    .p102:
+
+
+    dup
+    const8u 102
+    ne
+    bra .p103
+    pick 102
+    skip .pick_end
+    .p103:
+
+
+    dup
+    const8u 103
+    ne
+    bra .p104
+    pick 103
+    skip .pick_end
+    .p104:
+
+
+    dup
+    const8u 104
+    ne
+    bra .p105
+    pick 104
+    skip .pick_end
+    .p105:
+
+
+    dup
+    const8u 105
+    ne
+    bra .p106
+    pick 105
+    skip .pick_end
+    .p106:
+
+
+    dup
+    const8u 106
+    ne
+    bra .p107
+    pick 106
+    skip .pick_end
+    .p107:
+
+
+    dup
+    const8u 107
+    ne
+    bra .p108
+    pick 107
+    skip .pick_end
+    .p108:
+
+
+    dup
+    const8u 108
+    ne
+    bra .p109
+    pick 108
+    skip .pick_end
+    .p109:
+
+
+    dup
+    const8u 109
+    ne
+    bra .p110
+    pick 109
+    skip .pick_end
+    .p110:
+
+
+    dup
+    const8u 110
+    ne
+    bra .p111
+    pick 110
+    skip .pick_end
+    .p111:
+
+
+    dup
+    const8u 111
+    ne
+    bra .p112
+    pick 111
+    skip .pick_end
+    .p112:
+
+
+    dup
+    const8u 112
+    ne
+    bra .p113
+    pick 112
+    skip .pick_end
+    .p113:
+
+
+    dup
+    const8u 113
+    ne
+    bra .p114
+    pick 113
+    skip .pick_end
+    .p114:
+
+
+    dup
+    const8u 114
+    ne
+    bra .p115
+    pick 114
+    skip .pick_end
+    .p115:
+
+
+    dup
+    const8u 115
+    ne
+    bra .p116
+    pick 115
+    skip .pick_end
+    .p116:
+
+
+    dup
+    const8u 116
+    ne
+    bra .p117
+    pick 116
+    skip .pick_end
+    .p117:
+
+
+    dup
+    const8u 117
+    ne
+    bra .p118
+    pick 117
+    skip .pick_end
+    .p118:
+
+
+    dup
+    const8u 118
+    ne
+    bra .p119
+    pick 118
+    skip .pick_end
+    .p119:
+
+
+    dup
+    const8u 119
+    ne
+    bra .p120
+    pick 119
+    skip .pick_end
+    .p120:
+
+
+    dup
+    const8u 120
+    ne
+    bra .p121
+    pick 120
+    skip .pick_end
+    .p121:
+
+
+    dup
+    const8u 121
+    ne
+    bra .p122
+    pick 121
+    skip .pick_end
+    .p122:
+
+
+    dup
+    const8u 122
+    ne
+    bra .p123
+    pick 122
+    skip .pick_end
+    .p123:
+
+
+    dup
+    const8u 123
+    ne
+    bra .p124
+    pick 123
+    skip .pick_end
+    .p124:
+
+
+    dup
+    const8u 124
+    ne
+    bra .p125
+    pick 124
+    skip .pick_end
+    .p125:
+
+
+    dup
+    const8u 125
+    ne
+    bra .p126
+    pick 125
+    skip .pick_end
+    .p126:
+
+
+    dup
+    const8u 126
+    ne
+    bra .p127
+    pick 126
+    skip .pick_end
+    .p127:
+
+
+    dup
+    const8u 127
+    ne
+    bra .p128
+    pick 127
+    skip .pick_end
+    .p128:
+
+
+    dup
+    const8u 128
+    ne
+    bra .p129
+    pick 128
+    skip .pick_end
+    .p129:
+
+
+    dup
+    const8u 129
+    ne
+    bra .p130
+    pick 129
+    skip .pick_end
+    .p130:
+
+
+    dup
+    const8u 130
+    ne
+    bra .p131
+    pick 130
+    skip .pick_end
+    .p131:
+
+
+    dup
+    const8u 131
+    ne
+    bra .p132
+    pick 131
+    skip .pick_end
+    .p132:
+
+
+    dup
+    const8u 132
+    ne
+    bra .p133
+    pick 132
+    skip .pick_end
+    .p133:
+
+
+    dup
+    const8u 133
+    ne
+    bra .p134
+    pick 133
+    skip .pick_end
+    .p134:
+
+
+    dup
+    const8u 134
+    ne
+    bra .p135
+    pick 134
+    skip .pick_end
+    .p135:
+
+
+    dup
+    const8u 135
+    ne
+    bra .p136
+    pick 135
+    skip .pick_end
+    .p136:
+
+
+    dup
+    const8u 136
+    ne
+    bra .p137
+    pick 136
+    skip .pick_end
+    .p137:
+
+
+    dup
+    const8u 137
+    ne
+    bra .p138
+    pick 137
+    skip .pick_end
+    .p138:
+
+
+    dup
+    const8u 138
+    ne
+    bra .p139
+    pick 138
+    skip .pick_end
+    .p139:
+
+
+    dup
+    const8u 139
+    ne
+    bra .p140
+    pick 139
+    skip .pick_end
+    .p140:
+
+
+    dup
+    const8u 140
+    ne
+    bra .p141
+    pick 140
+    skip .pick_end
+    .p141:
+
+
+    dup
+    const8u 141
+    ne
+    bra .p142
+    pick 141
+    skip .pick_end
+    .p142:
+
+
+    dup
+    const8u 142
+    ne
+    bra .p143
+    pick 142
+    skip .pick_end
+    .p143:
+
+
+    dup
+    const8u 143
+    ne
+    bra .p144
+    pick 143
+    skip .pick_end
+    .p144:
+
+
+    dup
+    const8u 144
+    ne
+    bra .p145
+    pick 144
+    skip .pick_end
+    .p145:
+
+
+    dup
+    const8u 145
+    ne
+    bra .p146
+    pick 145
+    skip .pick_end
+    .p146:
+
+
+    dup
+    const8u 146
+    ne
+    bra .p147
+    pick 146
+    skip .pick_end
+    .p147:
+
+
+    dup
+    const8u 147
+    ne
+    bra .p148
+    pick 147
+    skip .pick_end
+    .p148:
+
+
+    dup
+    const8u 148
+    ne
+    bra .p149
+    pick 148
+    skip .pick_end
+    .p149:
+
+
+    dup
+    const8u 149
+    ne
+    bra .p150
+    pick 149
+    skip .pick_end
+    .p150:
+
+
+    dup
+    const8u 150
+    ne
+    bra .p151
+    pick 150
+    skip .pick_end
+    .p151:
+
+
+    dup
+    const8u 151
+    ne
+    bra .p152
+    pick 151
+    skip .pick_end
+    .p152:
+
+
+    dup
+    const8u 152
+    ne
+    bra .p153
+    pick 152
+    skip .pick_end
+    .p153:
+
+
+    dup
+    const8u 153
+    ne
+    bra .p154
+    pick 153
+    skip .pick_end
+    .p154:
+
+
+    dup
+    const8u 154
+    ne
+    bra .p155
+    pick 154
+    skip .pick_end
+    .p155:
+
+
+    dup
+    const8u 155
+    ne
+    bra .p156
+    pick 155
+    skip .pick_end
+    .p156:
+
+
+    dup
+    const8u 156
+    ne
+    bra .p157
+    pick 156
+    skip .pick_end
+    .p157:
+
+
+    dup
+    const8u 157
+    ne
+    bra .p158
+    pick 157
+    skip .pick_end
+    .p158:
+
+
+    dup
+    const8u 158
+    ne
+    bra .p159
+    pick 158
+    skip .pick_end
+    .p159:
+
+
+    dup
+    const8u 159
+    ne
+    bra .p160
+    pick 159
+    skip .pick_end
+    .p160:
+
+
+    dup
+    const8u 160
+    ne
+    bra .p161
+    pick 160
+    skip .pick_end
+    .p161:
+
+
+    dup
+    const8u 161
+    ne
+    bra .p162
+    pick 161
+    skip .pick_end
+    .p162:
+
+
+    dup
+    const8u 162
+    ne
+    bra .p163
+    pick 162
+    skip .pick_end
+    .p163:
+
+
+    dup
+    const8u 163
+    ne
+    bra .p164
+    pick 163
+    skip .pick_end
+    .p164:
+
+
+    dup
+    const8u 164
+    ne
+    bra .p165
+    pick 164
+    skip .pick_end
+    .p165:
+
+
+    dup
+    const8u 165
+    ne
+    bra .p166
+    pick 165
+    skip .pick_end
+    .p166:
+
+
+    dup
+    const8u 166
+    ne
+    bra .p167
+    pick 166
+    skip .pick_end
+    .p167:
+
+
+    dup
+    const8u 167
+    ne
+    bra .p168
+    pick 167
+    skip .pick_end
+    .p168:
+
+
+    dup
+    const8u 168
+    ne
+    bra .p169
+    pick 168
+    skip .pick_end
+    .p169:
+
+
+    dup
+    const8u 169
+    ne
+    bra .p170
+    pick 169
+    skip .pick_end
+    .p170:
+
+
+    dup
+    const8u 170
+    ne
+    bra .p171
+    pick 170
+    skip .pick_end
+    .p171:
+
+
+    dup
+    const8u 171
+    ne
+    bra .p172
+    pick 171
+    skip .pick_end
+    .p172:
+
+
+    dup
+    const8u 172
+    ne
+    bra .p173
+    pick 172
+    skip .pick_end
+    .p173:
+
+
+    dup
+    const8u 173
+    ne
+    bra .p174
+    pick 173
+    skip .pick_end
+    .p174:
+
+
+    dup
+    const8u 174
+    ne
+    bra .p175
+    pick 174
+    skip .pick_end
+    .p175:
+
+
+    dup
+    const8u 175
+    ne
+    bra .p176
+    pick 175
+    skip .pick_end
+    .p176:
+
+
+    dup
+    const8u 176
+    ne
+    bra .p177
+    pick 176
+    skip .pick_end
+    .p177:
+
+
+    dup
+    const8u 177
+    ne
+    bra .p178
+    pick 177
+    skip .pick_end
+    .p178:
+
+
+    dup
+    const8u 178
+    ne
+    bra .p179
+    pick 178
+    skip .pick_end
+    .p179:
+
+
+    dup
+    const8u 179
+    ne
+    bra .p180
+    pick 179
+    skip .pick_end
+    .p180:
+
+
+    dup
+    const8u 180
+    ne
+    bra .p181
+    pick 180
+    skip .pick_end
+    .p181:
+
+
+    dup
+    const8u 181
+    ne
+    bra .p182
+    pick 181
+    skip .pick_end
+    .p182:
+
+
+    dup
+    const8u 182
+    ne
+    bra .p183
+    pick 182
+    skip .pick_end
+    .p183:
+
+
+    dup
+    const8u 183
+    ne
+    bra .p184
+    pick 183
+    skip .pick_end
+    .p184:
+
+
+    dup
+    const8u 184
+    ne
+    bra .p185
+    pick 184
+    skip .pick_end
+    .p185:
+
+
+    dup
+    const8u 185
+    ne
+    bra .p186
+    pick 185
+    skip .pick_end
+    .p186:
+
+
+    dup
+    const8u 186
+    ne
+    bra .p187
+    pick 186
+    skip .pick_end
+    .p187:
+
+
+    dup
+    const8u 187
+    ne
+    bra .p188
+    pick 187
+    skip .pick_end
+    .p188:
+
+
+    dup
+    const8u 188
+    ne
+    bra .p189
+    pick 188
+    skip .pick_end
+    .p189:
+
+
+    dup
+    const8u 189
+    ne
+    bra .p190
+    pick 189
+    skip .pick_end
+    .p190:
+
+
+    dup
+    const8u 190
+    ne
+    bra .p191
+    pick 190
+    skip .pick_end
+    .p191:
+
+
+    dup
+    const8u 191
+    ne
+    bra .p192
+    pick 191
+    skip .pick_end
+    .p192:
+
+
+    dup
+    const8u 192
+    ne
+    bra .p193
+    pick 192
+    skip .pick_end
+    .p193:
+
+
+    dup
+    const8u 193
+    ne
+    bra .p194
+    pick 193
+    skip .pick_end
+    .p194:
+
+
+    dup
+    const8u 194
+    ne
+    bra .p195
+    pick 194
+    skip .pick_end
+    .p195:
+
+
+    dup
+    const8u 195
+    ne
+    bra .p196
+    pick 195
+    skip .pick_end
+    .p196:
+
+
+    dup
+    const8u 196
+    ne
+    bra .p197
+    pick 196
+    skip .pick_end
+    .p197:
+
+
+    dup
+    const8u 197
+    ne
+    bra .p198
+    pick 197
+    skip .pick_end
+    .p198:
+
+
+    dup
+    const8u 198
+    ne
+    bra .p199
+    pick 198
+    skip .pick_end
+    .p199:
+
+
+    dup
+    const8u 199
+    ne
+    bra .p200
+    pick 199
+    skip .pick_end
+    .p200:
+
+
+    dup
+    const8u 200
+    ne
+    bra .p201
+    pick 200
+    skip .pick_end
+    .p201:
+
+
+    dup
+    const8u 201
+    ne
+    bra .p202
+    pick 201
+    skip .pick_end
+    .p202:
+
+
+    dup
+    const8u 202
+    ne
+    bra .p203
+    pick 202
+    skip .pick_end
+    .p203:
+
+
+    dup
+    const8u 203
+    ne
+    bra .p204
+    pick 203
+    skip .pick_end
+    .p204:
+
+
+    dup
+    const8u 204
+    ne
+    bra .p205
+    pick 204
+    skip .pick_end
+    .p205:
+
+
+    dup
+    const8u 205
+    ne
+    bra .p206
+    pick 205
+    skip .pick_end
+    .p206:
+
+
+    dup
+    const8u 206
+    ne
+    bra .p207
+    pick 206
+    skip .pick_end
+    .p207:
+
+
+    dup
+    const8u 207
+    ne
+    bra .p208
+    pick 207
+    skip .pick_end
+    .p208:
+
+
+    dup
+    const8u 208
+    ne
+    bra .p209
+    pick 208
+    skip .pick_end
+    .p209:
+
+
+    dup
+    const8u 209
+    ne
+    bra .p210
+    pick 209
+    skip .pick_end
+    .p210:
+
+
+    dup
+    const8u 210
+    ne
+    bra .p211
+    pick 210
+    skip .pick_end
+    .p211:
+
+
+    dup
+    const8u 211
+    ne
+    bra .p212
+    pick 211
+    skip .pick_end
+    .p212:
+
+
+    dup
+    const8u 212
+    ne
+    bra .p213
+    pick 212
+    skip .pick_end
+    .p213:
+
+
+    dup
+    const8u 213
+    ne
+    bra .p214
+    pick 213
+    skip .pick_end
+    .p214:
+
+
+    dup
+    const8u 214
+    ne
+    bra .p215
+    pick 214
+    skip .pick_end
+    .p215:
+
+
+    dup
+    const8u 215
+    ne
+    bra .p216
+    pick 215
+    skip .pick_end
+    .p216:
+
+
+    dup
+    const8u 216
+    ne
+    bra .p217
+    pick 216
+    skip .pick_end
+    .p217:
+
+
+    dup
+    const8u 217
+    ne
+    bra .p218
+    pick 217
+    skip .pick_end
+    .p218:
+
+
+    dup
+    const8u 218
+    ne
+    bra .p219
+    pick 218
+    skip .pick_end
+    .p219:
+
+
+    dup
+    const8u 219
+    ne
+    bra .p220
+    pick 219
+    skip .pick_end
+    .p220:
+
+
+    dup
+    const8u 220
+    ne
+    bra .p221
+    pick 220
+    skip .pick_end
+    .p221:
+
+
+    dup
+    const8u 221
+    ne
+    bra .p222
+    pick 221
+    skip .pick_end
+    .p222:
+
+
+    dup
+    const8u 222
+    ne
+    bra .p223
+    pick 222
+    skip .pick_end
+    .p223:
+
+
+    dup
+    const8u 223
+    ne
+    bra .p224
+    pick 223
+    skip .pick_end
+    .p224:
+
+
+    dup
+    const8u 224
+    ne
+    bra .p225
+    pick 224
+    skip .pick_end
+    .p225:
+
+
+    dup
+    const8u 225
+    ne
+    bra .p226
+    pick 225
+    skip .pick_end
+    .p226:
+
+
+    dup
+    const8u 226
+    ne
+    bra .p227
+    pick 226
+    skip .pick_end
+    .p227:
+
+
+    dup
+    const8u 227
+    ne
+    bra .p228
+    pick 227
+    skip .pick_end
+    .p228:
+
+
+    dup
+    const8u 228
+    ne
+    bra .p229
+    pick 228
+    skip .pick_end
+    .p229:
+
+
+    dup
+    const8u 229
+    ne
+    bra .p230
+    pick 229
+    skip .pick_end
+    .p230:
+
+
+    dup
+    const8u 230
+    ne
+    bra .p231
+    pick 230
+    skip .pick_end
+    .p231:
+
+
+    dup
+    const8u 231
+    ne
+    bra .p232
+    pick 231
+    skip .pick_end
+    .p232:
+
+
+    dup
+    const8u 232
+    ne
+    bra .p233
+    pick 232
+    skip .pick_end
+    .p233:
+
+
+    dup
+    const8u 233
+    ne
+    bra .p234
+    pick 233
+    skip .pick_end
+    .p234:
+
+
+    dup
+    const8u 234
+    ne
+    bra .p235
+    pick 234
+    skip .pick_end
+    .p235:
+
+
+    dup
+    const8u 235
+    ne
+    bra .p236
+    pick 235
+    skip .pick_end
+    .p236:
+
+
+    dup
+    const8u 236
+    ne
+    bra .p237
+    pick 236
+    skip .pick_end
+    .p237:
+
+
+    dup
+    const8u 237
+    ne
+    bra .p238
+    pick 237
+    skip .pick_end
+    .p238:
+
+
+    dup
+    const8u 238
+    ne
+    bra .p239
+    pick 238
+    skip .pick_end
+    .p239:
+
+
+    dup
+    const8u 239
+    ne
+    bra .p240
+    pick 239
+    skip .pick_end
+    .p240:
+
+
+    dup
+    const8u 240
+    ne
+    bra .p241
+    pick 240
+    skip .pick_end
+    .p241:
+
+
+    dup
+    const8u 241
+    ne
+    bra .p242
+    pick 241
+    skip .pick_end
+    .p242:
+
+
+    dup
+    const8u 242
+    ne
+    bra .p243
+    pick 242
+    skip .pick_end
+    .p243:
+
+
+    dup
+    const8u 243
+    ne
+    bra .p244
+    pick 243
+    skip .pick_end
+    .p244:
+
+
+    dup
+    const8u 244
+    ne
+    bra .p245
+    pick 244
+    skip .pick_end
+    .p245:
+
+
+    dup
+    const8u 245
+    ne
+    bra .p246
+    pick 245
+    skip .pick_end
+    .p246:
+
+
+    dup
+    const8u 246
+    ne
+    bra .p247
+    pick 246
+    skip .pick_end
+    .p247:
+
+
+    dup
+    const8u 247
+    ne
+    bra .p248
+    pick 247
+    skip .pick_end
+    .p248:
+
+
+    dup
+    const8u 248
+    ne
+    bra .p249
+    pick 248
+    skip .pick_end
+    .p249:
+
+
+    dup
+    const8u 249
+    ne
+    bra .p250
+    pick 249
+    skip .pick_end
+    .p250:
+
+
+    dup
+    const8u 250
+    ne
+    bra .p251
+    pick 250
+    skip .pick_end
+    .p251:
+
+
+    dup
+    const8u 251
+    ne
+    bra .p252
+    pick 251
+    skip .pick_end
+    .p252:
+
+
+    dup
+    const8u 252
+    ne
+    bra .p253
+    pick 252
+    skip .pick_end
+    .p253:
+
+
+    dup
+    const8u 253
+    ne
+    bra .p254
+    pick 253
+    skip .pick_end
+    .p254:
+
+
+    dup
+    const8u 254
+    ne
+    bra .p255
+    pick 254
+    skip .pick_end
+    .p255:
+
+    dup
+    const8u 255
+    ne
+    bra .error
+    pick 255
+        
+    .pick_end:
+    swap
+    drop
+    swap
+    dup
+    lit0
+    ne
+    bra .pick_table_minus_check
+    drop
+    skip .pick_table_plus_ret
+    .pick_table_minus_check:
+    dup
+    lit1
+    ne
+    bra .pick_table_finished_check
+    drop
+    skip .pick_table_minus_ret
+    .pick_table_finished_check:
+    lit2
+    eq
+    bra .pick_table_finished_ret
+    skip .pick_table_close_ret
+
+.end:
+    nop
