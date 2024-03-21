@@ -1,4 +1,6 @@
-# dwarbf - A Brainfuck interpreter written in DWARF debug information
+# dwarbf 
+
+A Brainfuck interpreter written in DWARF debug information
 
 ## Background
 
@@ -184,6 +186,6 @@ The `dwarfter` folder contains a DWARF expression interpreter. It contains funct
 
 Not all DWARF instructions are supported by the interpreter because some require call frame information, register reading, or just a lot more work to implement.
 
-### "This is absurd and useless"
+## "This is absurd and useless"
 
 Yes.
