@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include "dwarf.h"
 #include "elf.h"
+#include <sys/stat.h>
 #include <algorithm>
 #include "dwarfas.hpp"
 
@@ -489,11 +490,14 @@ std::vector<std::byte> dwas::create_elf(
 
     std::ofstream elf_file(output_path, std::ios_base::binary | std::ios_base::out);
     elf_file.write((char*)elf_data.data(), elf_data.size());
+    elf_file.close();
+
+    chmod(output_path.c_str(), 0777);
 
     // Return the load segment contents for testing
     elf_data.clear();
     insert(text);
     insert(strtab);
-    insert(embed_string_text);
+    insert_range(embed_string_text);
     return elf_data;
 }

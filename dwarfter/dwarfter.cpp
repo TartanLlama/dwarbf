@@ -320,12 +320,15 @@ std::uint64_t dwter::eval(const std::vector<std::byte>& memory, std::uint64_t ba
     while (!cur.finished()) {
         auto opcode = cur.fixed<std::uint8_t>();
 
-        std::cout << "opcode: " << opcode_to_string(opcode) << std::endl;
-        std::cout << "stack: " << std::endl;
-        for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
-            std::cout << std::hex << *it << std::dec << std::endl;
+        if (debug) {
+            std::cout << "opcode: " << opcode_to_string(opcode) << std::endl;
+            std::cout << "stack: " << std::endl;
+            for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
+                std::cout << std::hex << *it << std::dec << std::endl;
+            }
+            std::cout << std::endl;
         }
-        std::cout << std::endl;
+
         if (opcode >= DW_OP_lit0 and opcode <= DW_OP_lit31) {
             stack.push_back(opcode - DW_OP_lit0);
         }

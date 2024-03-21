@@ -77,7 +77,14 @@
     eq
     bra .do_close_brace
     
-    # [ or anything else
+    dup
+
+    # Compare against [
+    const1u 91
+    eq
+    bra .do_open_brace
+
+    # Anything else
     drop
     swap
     skip .continue_loop
@@ -245,9 +252,6 @@
     drop
     skip .continue_loop
     .close_seek:
-    nop
-    nop
-    nop
     swap
     drop
     swap
@@ -288,6 +292,88 @@
     swap
     skip .close_seek_loop
 
+# INPUT: char, prog, cell, list, marker
+.do_open_brace:
+    nop
+    drop
+    swap
+    lit6
+    .open_loop:
+    dup
+    rot
+    over
+    swap
+    lit4
+    swap
+    skip .pick_table
+    .pick_table_open_ret:
+    dup
+    rot
+    lit8
+    shr
+    lit6
+    minus
+    eq
+    bra .open_found
+    # Look for marker
+    const8u 18446744073709551360
+    eq
+    bra .open_seek
+    swap
+    lit1
+    plus
+    skip .open_loop
+    .open_found:
+    const1u 56
+    shl
+    const1u 56
+    shr
+    lit0
+    eq
+    bra .open_seek
+    swap
+    drop
+    skip .continue_loop
+    .open_seek:
+    swap
+    drop
+    swap
+    lit0
+    swap
+    .open_seek_loop:
+    lit1
+    plus
+    dup
+    deref_size 1
+    dup
+    const1u 91
+    eq
+    bra .open_handle_open_brace
+    const1u 93
+    eq
+    bra .open_handle_close_brace
+    skip .open_seek_loop
+    .open_handle_close_brace:
+    swap
+    dup
+    lit0
+    ne
+    bra .open_continue_seek_loop
+    drop
+    swap
+    skip .continue_loop
+    .open_continue_seek_loop:
+    lit1
+    minus
+    swap
+    skip .open_seek_loop
+    .open_handle_open_brace:
+    drop
+    swap
+    lit1
+    plus
+    swap
+    skip .open_seek_loop
 
 # INPUT: cell, prog, list, marker
 .continue_loop:
@@ -347,7 +433,7 @@
     const4u 0x000E7707
     skip .end
 
-# INPUT: pick_index, return address (0 = plus, 1 = minus, 2 = finished, 3 = close brace),
+# INPUT: pick_index, return address (0 = plus, 1 = minus, 2 = finished, 3 = close brace, 4 = open brace),
 #        working_memory, prog, list, marker
 # OUTPUT: value at pick_index, 
 #         working_memory, prog, list, marker
@@ -2643,10 +2729,17 @@
     drop
     skip .pick_table_minus_ret
     .pick_table_finished_check:
+    dup
     lit2
+    ne
+    bra .pick_table_close_check
+    drop
+    skip .pick_table_finished_ret
+    .pick_table_close_check:
+    lit3
     eq
-    bra .pick_table_finished_ret
-    skip .pick_table_close_ret
+    bra .pick_table_close_ret
+    skip .pick_table_open_ret
 
 .end:
     nop

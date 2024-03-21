@@ -23,7 +23,7 @@ int main(int argc, const char** argv) {
     auto load_segment = dwas::create_elf(
         dwarf_program, "dwarbf", 
         program_text.str(), "dwarbf_program", 
-        program_path.replace_extension());
+        program_path.filename().replace_extension());
 
     if (argc > 3) {
         print_usage();
@@ -32,7 +32,9 @@ int main(int argc, const char** argv) {
     if (argc == 3) {
         if (std::string(argv[2]) == "--run" or std::string(argv[2]) == "--debug") {
             auto debug = std::string(argv[2]) == "--debug";
-            dwter::eval(load_segment, 0x08048000, 0x08048025, dwarf_program, debug);
+            auto result = dwter::eval(load_segment, 0x08048000, 0x08048038, dwarf_program, debug);
+            std::cout << "Result: " << result << std::endl;
+            return result;
         }
         else {
             print_usage();
