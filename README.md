@@ -18,6 +18,7 @@ There are no dependencies. The project uses CMake for building:
 $ mkdir build && cd build
 $ cmake ..
 $ cmake --build .
+```
 
 ## Running
 
