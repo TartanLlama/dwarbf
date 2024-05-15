@@ -316,10 +316,11 @@ std::uint64_t dwter::eval(const std::vector<std::byte>& memory, std::uint64_t ba
         stack.pop_back();
         stack.push_back(op(lhs, rhs) ? 1 : 0);
         };
-
+    std::uint64_t n = 0;
     while (!cur.finished()) {
         auto opcode = cur.fixed<std::uint8_t>();
 
+        n++;
         if (debug) {
             std::cout << "opcode: " << opcode_to_string(opcode) << std::endl;
             std::cout << "stack: " << std::endl;
@@ -522,5 +523,6 @@ std::uint64_t dwter::eval(const std::vector<std::byte>& memory, std::uint64_t ba
         case DW_OP_bit_piece: throw std::runtime_error("Unsupported opcode DW_OP_bit_piece");
         }
     }
+    std::cout << "Number of instructions:" << n << std::endl;
     return stack.back();
 }
